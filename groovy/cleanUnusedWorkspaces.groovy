@@ -2,31 +2,55 @@ import hudson.node_monitors.*;
  
 // Doesn't support custom workspaces
 
-def cleanNode(node) {
-  computer = node.toComputer()
-  if (computer.getChannel() == null) return
-
-  rootPath = node.getRootPath()
-  wsPath = new FilePath(rootPath, 'workspace')
-  size = DiskSpaceMonitor.DESCRIPTOR.get(computer).size
-  roundedSize = size / (1024 * 1024 * 1024) as int
-  println("node: " + node.getDisplayName() + ", rootPath: " + rootPath + ", workspace: " + wsPath + ", free space: " + roundedSize + "GB")
- 
-  nodeWss = Jenkins.instance.items.collect { node.getWorkspaceFor(it) }.collect { it.getName() }
- 
-  wsNames = wsPath.list().collect { it.getName() }.findAll { !it.endsWith("@tmp") && !it.endsWith("@libs") && !it.endsWith("@script") }
-  wsNames.removeAll(nodeWss)
-  wsNames.each { name ->
-    [new FilePath(wsPath, name), new FilePath(wsPath, name + "@tmp")].each { unusedWs ->
-      if (unusedWs.exists()) {
-        println "Remove unused ws: " + unusedWs
-        unusedWs.deleteRecursive()
-      }
+def processFolder(node, folder) {
+  
+  def folderWs = node.getWorkspaceFor(folder)
+  
+  if (!folderWs.exists()) {
+    return
+  }
+  
+  def folderDirs = folderWs.list().collect { it.getName() }
+  
+  folder.items.each { item ->
+    processItem(node, item)
+    
+    def dirName = item.getName()
+    
+    folderDirs.remove(dirName)
+    folderDirs.remove(dirName + "@tmp")
+    folderDirs.remove(dirName + "@libs")
+    folderDirs.remove(dirName + "@script")
+  }
+  
+  folderDirs.each {
+  	def unusedWs = new FilePath(folderWs, it)
+    if (unusedWs.exists()) {
+      println "Delete unused workspace ${unusedWs}"
+      unusedWs.deleteRecursive()
     }
   }
 }
 
-cleanNode(Jenkins.get()) 
-Jenkins.get().nodes.each { cleanNode(it); }
+def processItem(node, item) {
+  if (item instanceof com.cloudbees.hudson.plugins.folder.Folder) {
+  	processFolder(node, (com.cloudbees.hudson.plugins.folder.Folder)item)
+  }	
+}
+
+Jenkins.instance.nodes.each { node ->
+  
+  computer = node.toComputer()
+  if (computer.getChannel() == null) return
+    
+  diskSize = DiskSpaceMonitor.DESCRIPTOR.get(computer).size
+  roundedSize = diskSize / (1024 * 1024 * 1024) as int
+  
+  println("node: " + node.getDisplayName() + ", rootPath: " + node.getRootPath() + ", workspace: " + node.getWorkspaceRoot() + ", free space: " + roundedSize + "GB")
+  
+  Jenkins.instance.getAllItems(AbstractItem.class).each { item ->
+    processItem(node, item)
+  }
+}
  
 return null
